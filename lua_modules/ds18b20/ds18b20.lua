@@ -105,14 +105,6 @@ function readScratchpad(addr)
   end
   -- print(data:byte(1,9))
   return data
---  local crc = ow.crc8(string.sub(data,1,8))
-  -- print("CRC="..crc)
---  if (crc == data:byte(9)) then
---    return convertTemperature(data, addr, unit)
---  else
---    result = "Data CRC is not valid"
---  end
---  return result
 end
 
 function checkDataCrc(data)
