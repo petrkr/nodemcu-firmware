@@ -52,6 +52,14 @@ temp_result = 0
 --------------------------------------------------------------------------------
 -- private functions
 --------------------------------------------------------------------------------
+local function checkAddrCrc(addr)
+  return ow.crc8(string.sub(addr,1,7)) == addr:byte(8)
+end
+
+local function checkDataCrc(data)
+  return ow.crc8(string.sub(data,1,8)) == data:byte(9)
+end
+
 local function parasitePowered(addr)
   ow.reset(pin)
   ow.select(pin, addr)
@@ -103,12 +111,15 @@ local function convertTemperature(data, addr, unit)
   return t / 10000
 end
 
-local function checkAddrCrc(addr)
-  return ow.crc8(string.sub(addr,1,7)) == addr:byte(8)
-end
-
-local function checkDataCrc(data)
-  return ow.crc8(string.sub(data,1,8)) == data:byte(9)
+local function processRead(addr, callback_func)
+  data = readScratchpad(addr)
+  if (checkDataCrc(data)) then
+    temp_result = convertTemperature(data, addr, unit)
+  else
+    temp_result = "Data CRC is not valid"
+  end
+ 
+  callback_func()
 end
 
 --------------------------------------------------------------------------------
@@ -131,7 +142,6 @@ function addrs()
     if(addr ~= nil) then
       table.insert(tbl, addr)
     end
-    tmr.wdclr()
   until (addr == nil)
   ow.reset_search(pin)
   return tbl
@@ -157,27 +167,14 @@ function callBack(addr, func)
         -- external powered, waiting for finish
         print ("Using external powered wait")
         repeat
-          local res = ow.read(pin)
-          tmr.wdclr()
-        until ( res ~= 0 )
+        until ( ow.read(pin) ~= 0 )
         processRead(addr, func)
       end
     end
   end
 end
 
-local function processRead(addr, callback_func)
-  data = readScratchpad(addr)
-  if (checkDataCrc(data)) then
-    temp_result = convertTemperature(data, addr, unit)
-  else
-    temp_result = "Data CRC is not valid"
-  end
-  tmr.wdclr()
-  
-  callback_func()
-end
-
+-- Original functions
 local function readNumber(addr, unit)
   result = nil
   setup(pin)
@@ -208,9 +205,7 @@ local function readNumber(addr, unit)
         -- external powered, waiting for finish
         print ("Using external powered wait")
         repeat
-          local res = ow.read(pin)
-          tmr.wdclr()
-        until ( res ~= 0 )
+        until ( ow.read(pin) ~= 0 )
       end
 
       data = readScratchpad(addr)
@@ -219,8 +214,6 @@ local function readNumber(addr, unit)
       else
         result = "Data CRC is not valid"
       end
-
-      tmr.wdclr()
     else
     -- print("Device family is not recognized.")
       result = "Device family is not recognized."
