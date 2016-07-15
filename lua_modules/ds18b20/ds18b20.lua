@@ -36,9 +36,84 @@ setfenv(1,M)
 --------------------------------------------------------------------------------
 -- Implementation
 --------------------------------------------------------------------------------
+-- Supported temperature units
+--------------------------------------------------------------------------------
+-- Constants
+--------------------------------------------------------------------------------
 C = 'C'
 F = 'F'
 K = 'K'
+--------------------------------------------------------------------------------
+-- Public variables
+--------------------------------------------------------------------------------
+-- Last callback read temperature
+temp_result = 0
+
+--------------------------------------------------------------------------------
+-- private functions
+--------------------------------------------------------------------------------
+local function parasitePowered(addr)
+  ow.reset(pin)
+  ow.select(pin, addr)
+  ow.write(pin, 0xB4, 1)
+  return ow.read(pin) == 0
+end
+
+local function readScratchpad(addr)
+  ow.read(pin)
+  present = ow.reset(pin)
+  ow.select(pin, addr)
+  ow.write(pin,0xBE,1)
+  -- print("P="..present)
+  local data = nil
+  data = string.char(ow.read(pin))
+  for i = 1, 8 do
+    data = data .. string.char(ow.read(pin))
+  end
+  -- print(data:byte(1,9))
+  return data
+end
+
+local function convertTemperature(data, addr, unit)
+  local t = (data:byte(1) + data:byte(2) * 256)
+  if (t > 32767) then
+    t = t - 65536
+  end
+
+  if (addr:byte(1) == 0x28) then
+    t = t * 625  -- DS18B20, 4 fractional bits
+  else
+    t = 1000 * (bit.rshift(t, 1))
+    t = t - 250
+    local h = 1000 * (data:byte(8) - data:byte(7))
+    h = h / data:byte(8)
+    t = t + h
+    t = t * 10
+  end
+
+  if(unit == nil or unit == 'C') then
+   -- do nothing
+  elseif(unit == 'F') then
+    t = t * 1.8 + 320000
+  elseif(unit == 'K') then
+    t = t + 2731500
+  else
+    return "Unknown unit"
+  end
+  return t / 10000
+end
+
+local function checkAddrCrc(addr)
+  return ow.crc8(string.sub(addr,1,7)) == addr:byte(8)
+end
+
+local function checkDataCrc(data)
+  return ow.crc8(string.sub(data,1,8)) == data:byte(9)
+end
+
+--------------------------------------------------------------------------------
+-- public functions
+--------------------------------------------------------------------------------
 function setup(dq)
   pin = dq
   if(pin == nil) then
@@ -46,7 +121,21 @@ function setup(dq)
   end
   ow.setup(pin) 
 end
-temp_result = 0
+
+function addrs()
+  setup(pin)
+  tbl = {}
+  ow.reset_search(pin)
+  repeat
+    addr = ow.search(pin)
+    if(addr ~= nil) then
+      table.insert(tbl, addr)
+    end
+    tmr.wdclr()
+  until (addr == nil)
+  ow.reset_search(pin)
+  return tbl
+end
 
 function callBack(addr, func)
   -- reset last temp
@@ -77,7 +166,7 @@ function callBack(addr, func)
   end
 end
 
-function processRead(addr, callback_func)
+local function processRead(addr, callback_func)
   data = readScratchpad(addr)
   if (checkDataCrc(data)) then
     temp_result = convertTemperature(data, addr, unit)
@@ -89,85 +178,7 @@ function processRead(addr, callback_func)
   callback_func()
 end
 
-function addrs()
-  setup(pin)
-  tbl = {}
-  ow.reset_search(pin)
-  repeat
-    addr = ow.search(pin)
-    if(addr ~= nil) then
-      table.insert(tbl, addr)
-    end
-    tmr.wdclr()
-  until (addr == nil)
-  ow.reset_search(pin)
-  return tbl
-end
-
-function convertTemperature(data, addr, unit)
-  local t = (data:byte(1) + data:byte(2) * 256)
-  if (t > 32767) then
-    t = t - 65536
-  end
-
-  if (addr:byte(1) == 0x28) then
-    t = t * 625  -- DS18B20, 4 fractional bits
-  else
-    t = 1000 * (bit.rshift(t, 1))
-    t = t - 250
-    local h = 1000 * (data:byte(8) - data:byte(7))
-    h = h / data:byte(8)
-    t = t + h
-    t = t * 10
-  end
-
-  if(unit == nil or unit == 'C') then
-   -- do nothing
-  elseif(unit == 'F') then
-    t = t * 1.8 + 320000
-  elseif(unit == 'K') then
-    t = t + 2731500
-  else
-    return "Unknown unit"
-  end
-  t = t / 10000
-  return t
-end
-
-function readScratchpad(addr)
-  ow.read(pin)
-  present = ow.reset(pin)
-  ow.select(pin, addr)
-  ow.write(pin,0xBE,1)
-  -- print("P="..present)
-  local data = nil
-  data = string.char(ow.read(pin))
-  for i = 1, 8 do
-    data = data .. string.char(ow.read(pin))
-  end
-  -- print(data:byte(1,9))
-  return data
-end
-
-function checkAddrCrc(addr)
-  crc = ow.crc8(string.sub(addr,1,7))
-  return crc == addr:byte(8)
-end
-
-function checkDataCrc(data)
-  local crc = ow.crc8(string.sub(data,1,8))
-  return crc == data:byte(9)
-end
-
-function parasitePowered(addr)
-  ow.reset(pin)
-  ow.select(pin, addr)
-  ow.write(pin, 0xB4, 1)
-  local parasite = ow.read(pin)
-  return parasite == 0
-end
-
-function readNumber(addr, unit)
+local function readNumber(addr, unit)
   result = nil
   setup(pin)
   flag = false
