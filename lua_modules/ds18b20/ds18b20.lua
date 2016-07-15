@@ -17,6 +17,8 @@ _G[modname] = M
 local pin = nil
 -- DS18B20 default pin
 local defaultPin = 9
+-- processing flag
+local processing = false
 --------------------------------------------------------------------------------
 -- Local used modules
 --------------------------------------------------------------------------------
@@ -120,6 +122,9 @@ local function processRead(addr, callback_func)
   end
  
   callback_func()
+
+  -- clean up processing flag
+  processing = false
 end
 
 --------------------------------------------------------------------------------
@@ -134,6 +139,7 @@ function setup(dq)
 end
 
 function addrs()
+  local st = tmr.now()
   setup(pin)
   tbl = {}
   ow.reset_search(pin)
@@ -144,11 +150,16 @@ function addrs()
     end
   until (addr == nil)
   ow.reset_search(pin)
+  print("Took: " .. tmr.now()-st .. " uS")
   return tbl
 end
 
 function callBack(addr, func)
   -- reset last temp
+  if processing then
+    return false
+  end
+  processing = true
   temp_result = 0
   print(addr:byte(1,9))
   if checkAddrCrc(addr) then
@@ -166,12 +177,24 @@ function callBack(addr, func)
       else
         -- external powered, waiting for finish
         print ("Using external powered wait")
-        repeat
-        until ( ow.read(pin) ~= 0 )
-        processRead(addr, func)
-      end
-    end
-  end
+        -- run async
+        tmr.alarm(1, 1, 0, function()
+          local st = tmr.now()
+          repeat
+          until ( ow.read(pin) ~= 0 )
+          print("Took: " .. tmr.now()-st .. " uS")
+          processRead(addr, func)
+        end)
+      end -- parasite if
+    else
+      processing = false
+      return false
+    end -- vendor if
+  else
+    processing = false
+    return false
+  end -- crc check if
+  return true
 end
 
 -- Original functions
