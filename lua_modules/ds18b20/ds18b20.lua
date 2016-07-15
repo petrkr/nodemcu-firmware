@@ -44,7 +44,49 @@ function setup(dq)
   if(pin == nil) then
     pin = defaultPin
   end
-  ow.setup(pin)
+  ow.setup(pin) 
+end
+temp_result = 0
+
+function callBack(addr, func)
+  -- reset last temp
+  temp_result = 0
+  print(addr:byte(1,9))
+  if checkAddrCrc(addr) then
+    if ((addr:byte(1) == 0x10) or (addr:byte(1) == 0x28)) then
+      -- print("Device is a DS18S20 family device.")
+      parasite = parasitePowered(addr)
+      ow.reset(pin)
+      ow.select(pin, addr)
+      ow.write(pin, 0x44, 1)
+      if parasite then
+        -- Parasite powered, need to wait ~750ms
+        print ("Using parasite power wait")
+        -- TODO: use different wait than delay
+        tmr.alarm(1, 750, 0, function () processRead(addr, func) end)
+      else
+        -- external powered, waiting for finish
+        print ("Using external powered wait")
+        repeat
+          local res = ow.read(pin)
+          tmr.wdclr()
+        until ( res ~= 0 )
+        processRead(addr, func)
+      end
+    end
+  end
+end
+
+function processRead(addr, callback_func)
+  data = readScratchpad(addr)
+  if (checkDataCrc(data)) then
+    temp_result = convertTemperature(data, addr, unit)
+  else
+    temp_result = "Data CRC is not valid"
+  end
+  tmr.wdclr()
+  
+  callback_func()
 end
 
 function addrs()
@@ -107,14 +149,22 @@ function readScratchpad(addr)
   return data
 end
 
+function checkAddrCrc(addr)
+  crc = ow.crc8(string.sub(addr,1,7))
+  return crc == addr:byte(8)
+end
+
 function checkDataCrc(data)
   local crc = ow.crc8(string.sub(data,1,8))
+  return crc == data:byte(9)
+end
 
-  if (crc == data:byte(9)) then
-    return true
-  else
-    return false
-  end
+function parasitePowered(addr)
+  ow.reset(pin)
+  ow.select(pin, addr)
+  ow.write(pin, 0xB4, 1)
+  local parasite = ow.read(pin)
+  return parasite == 0
 end
 
 function readNumber(addr, unit)
@@ -122,33 +172,23 @@ function readNumber(addr, unit)
   setup(pin)
   flag = false
   if(addr == nil) then
-    ow.reset_search(pin)
-    count = 0
-    repeat
-      count = count + 1
-      addr = ow.search(pin)
-      tmr.wdclr()
-    until((addr ~= nil) or (count > 100))
-    ow.reset_search(pin)
+    addresses = addrs()
   end
-  if(addr == nil) then
+  if(addresses == nil) then
   -- return result
     return "Not found any sensor"
+  else
+    addr = addresses[1]
   end
-  crc = ow.crc8(string.sub(addr,1,7))
-  if (crc == addr:byte(8)) then
+
+  if checkAddrCrc(addr) then
     if ((addr:byte(1) == 0x10) or (addr:byte(1) == 0x28)) then
       -- print("Device is a DS18S20 family device.")
-      ow.reset(pin)
-      ow.select(pin, addr)
-      ow.write(pin, 0xB4, 1)
-      local parasite = ow.read(pin)
-      res = ow.read(pin)
-      -- print("Power: " .. res)
+      parasite = parasitePowered(addr)
       ow.reset(pin)
       ow.select(pin, addr)
       ow.write(pin, 0x44, 1)
-      if parasite == 0 then
+      if parasite then
         -- Parasite powered, need to wait ~750ms
         print ("Using parasite power wait")
         -- TODO: use different wait than delay
