@@ -30,6 +30,7 @@ local ow = ow
 local tmr = tmr
 -- bit module
 local bit = bit
+local print = print
 -- Limited to local environment
 setfenv(1,M)
 --------------------------------------------------------------------------------
@@ -61,6 +62,69 @@ function addrs()
   return tbl
 end
 
+function convertTemperature(data, addr, unit)
+  local t = (data:byte(1) + data:byte(2) * 256)
+  if (t > 32767) then
+    t = t - 65536
+  end
+
+  if (addr:byte(1) == 0x28) then
+    t = t * 625  -- DS18B20, 4 fractional bits
+  else
+    t = 1000 * (bit.rshift(t, 1))
+    t = t - 250
+    local h = 1000 * (data:byte(8) - data:byte(7))
+    h = h / data:byte(8)
+    t = t + h
+    t = t * 10
+  end
+
+  if(unit == nil or unit == 'C') then
+   -- do nothing
+  elseif(unit == 'F') then
+    t = t * 1.8 + 320000
+  elseif(unit == 'K') then
+    t = t + 2731500
+  else
+    return "Unknown unit"
+  end
+  t = t / 10000
+  return t
+end
+
+function readScratchpad(addr)
+  ow.read(pin)
+  present = ow.reset(pin)
+  ow.select(pin, addr)
+  ow.write(pin,0xBE,1)
+  -- print("P="..present)
+  local data = nil
+  data = string.char(ow.read(pin))
+  for i = 1, 8 do
+    data = data .. string.char(ow.read(pin))
+  end
+  -- print(data:byte(1,9))
+  return data
+--  local crc = ow.crc8(string.sub(data,1,8))
+  -- print("CRC="..crc)
+--  if (crc == data:byte(9)) then
+--    return convertTemperature(data, addr, unit)
+--  else
+--    result = "Data CRC is not valid"
+--  end
+--  return result
+end
+
+function checkDataCrc(data)
+  local crc = ow.crc8(string.sub(data,1,8))
+
+  if (crc == data:byte(9)) then
+    return true
+  else
+    return false
+  end
+end
+
 function readNumber(addr, unit)
   result = nil
   setup(pin)
@@ -85,53 +149,34 @@ function readNumber(addr, unit)
       -- print("Device is a DS18S20 family device.")
       ow.reset(pin)
       ow.select(pin, addr)
-      ow.write(pin, 0x44, 1)
-      tmr.delay(750000)
-      present = ow.reset(pin)
+      ow.write(pin, 0xB4, 1)
+      local parasite = ow.read(pin)
+      res = ow.read(pin)
+      -- print("Power: " .. res)
+      ow.reset(pin)
       ow.select(pin, addr)
-      ow.write(pin,0xBE,1)
-      -- print("P="..present)
-      data = nil
-      data = string.char(ow.read(pin))
-      for i = 1, 8 do
-        data = data .. string.char(ow.read(pin))
+      ow.write(pin, 0x44, 1)
+      if parasite == 0 then
+        -- Parasite powered, need to wait ~750ms
+        print ("Using parasite power wait")
+        -- TODO: use different wait than delay
+        tmr.delay(750000)
+      else
+        -- external powered, waiting for finish
+        print ("Using external powered wait")
+        repeat
+          local res = ow.read(pin)
+          tmr.wdclr()
+        until ( res ~= 0 )
       end
-      -- print(data:byte(1,9))
-      crc = ow.crc8(string.sub(data,1,8))
-      -- print("CRC="..crc)
-      if (crc == data:byte(9)) then
-        t = (data:byte(1) + data:byte(2) * 256)
-        if (t > 32767) then
-          t = t - 65536
-        end
 
-        if (addr:byte(1) == 0x28) then
-          t = t * 625  -- DS18B20, 4 fractional bits
-        else
-          -- t = t * 5000 -- DS18S20, 1 fractional bit
-          t = 1000 * (bit.rshift(t, 1))
-          t = t - 250
-          local h = 1000 * (data:byte(8) - data:byte(7))
-          h = h / data:byte(8)
-          t = t + h
-          t = t * 10
-        end
-
-        if(unit == nil or unit == 'C') then
-          -- do nothing
-        elseif(unit == 'F') then
-          t = t * 1.8 + 320000
-        elseif(unit == 'K') then
-          t = t + 2731500
-        else
-        -- return nil
-          return "Unknown unit"
-        end
-        t = t / 10000
-        return t
+      data = readScratchpad(addr)
+      if (checkDataCrc(data)) then
+        result = convertTemperature(data, addr, unit)
       else
         result = "Data CRC is not valid"
       end
+
       tmr.wdclr()
     else
     -- print("Device family is not recognized.")
