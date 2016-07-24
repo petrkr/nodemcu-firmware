@@ -120,9 +120,10 @@ local function processRead(addr, callback_func)
   else
     temp_result = "Data CRC is not valid"
   end
- 
-  callback_func()
 
+  if callback_func ~= nil then
+    callback_func(temp_result)
+  end
   -- clean up processing flag
   processing = false
 end
@@ -154,13 +155,13 @@ function addrs()
   return tbl
 end
 
-function callBack(addr, func)
-  -- reset last temp
+function startConvert(addr, func)
   if processing then
     return false
   end
   processing = true
-  temp_result = 0
+  -- reset last temp
+  temp_result = nil
   print(addr:byte(1,9))
   if checkAddrCrc(addr) then
     if ((addr:byte(1) == 0x10) or (addr:byte(1) == 0x28)) then
@@ -172,7 +173,6 @@ function callBack(addr, func)
       if parasite then
         -- Parasite powered, need to wait ~750ms
         print ("Using parasite power wait")
-        -- TODO: use different wait than delay
         tmr.alarm(1, 750, 0, function () processRead(addr, func) end)
       else
         -- external powered, waiting for finish
