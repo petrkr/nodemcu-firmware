@@ -55,10 +55,12 @@ temp_result = 0
 -- private functions
 --------------------------------------------------------------------------------
 local function checkAddrCrc(addr)
+  if addr == nil then return false end
   return ow.crc8(string.sub(addr,1,7)) == addr:byte(8)
 end
 
 local function checkDataCrc(data)
+  if data == nil then return false end
   return ow.crc8(string.sub(data,1,8)) == data:byte(9)
 end
 
